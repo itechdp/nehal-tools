@@ -580,7 +580,6 @@ function App() {
                   {uniqueCompanies.map(company => {
                     const companyInvoiceCount = invoices.filter(inv => inv.companyName === company && !inv.excluded).length
                     const overdueCount = invoices.filter(inv => inv.companyName === company && inv.dueDays <= 0 && !inv.excluded).length
-                    const companyInvoices = invoices.filter(inv => inv.companyName === company && !inv.excluded)
                     const log = emailLogs.find(l => l.company === company)
                     const isPaused = log?.remindersPaused || false
                     
