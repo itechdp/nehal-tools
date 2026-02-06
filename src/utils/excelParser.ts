@@ -38,19 +38,24 @@ export const parseExcelFile = (file: File): Promise<Invoice[]> => {
 
         const invoices: Invoice[] = jsonData.map((row: any, index) => {
           const billAmt = parseFloat(row['Bill Amount'] || row['BillAmount'] || '0') || 0
-          const pendingAmt = parseFloat(row['Pending Amount'] || row['PendingAmount'] || '0') || 0
-          const balanceAmt = parseFloat(row['Balance Amount'] || row['BalanceAmount'] || '0') || 0
+          const gstAssessable = parseFloat(row['GST Assessable Amount'] || row['GSTAssessableAmount'] || '0') || 0
+          const stateUTTax = parseFloat(row['State/UT Tax Amount'] || row['StateUTTaxAmount'] || '0') || 0
+          const centralTax = parseFloat(row['Central Tax Amount'] || row['CentralTaxAmount'] || '0') || 0
+          const integratedTax = parseFloat(row['Integrated Tax Amount'] || row['IntegratedTaxAmount'] || '0') || 0
           
           return {
             id: `INV-${Date.now()}-${index}`,
-            companyName: row['Company Name'] || row['CompanyName'] || row['Company Nam'] || '',
-            companyEmail: row['Company Email'] || row['CompanyEmail'] || '',
-            invoiceNo: row['Invoice No.'] || row['Invoice No'] || row['InvoiceNo'] || '',
-            invoiceDate: excelDateToString(row['Invoice Date'] || row['InvoiceDate']),
+            partyGSTIN: row['Party GSTIN No.'] || row['Party GSTIN No'] || row['PartyGSTINNo'] || '',
+            partyName: row['Party Name'] || row['PartyName'] || '',
+            partyEmail: row['Party E-Mail'] || row['Party Email'] || row['PartyEmail'] || '',
+            billNo: row['Bill No'] || row['Bill No.'] || row['BillNo'] || '',
+            billDate: excelDateToString(row['Bill Date'] || row['BillDate']),
             dueDays: parseInt(row['Due Days'] || row['DueDays'] || '0') || 0,
+            gstAssessableAmount: gstAssessable,
+            stateUTTaxAmount: stateUTTax,
+            centralTaxAmount: centralTax,
+            integratedTaxAmount: integratedTax,
             billAmount: billAmt,
-            pendingAmount: pendingAmt,
-            balanceAmount: balanceAmt,
             excluded: false,
           }
         })

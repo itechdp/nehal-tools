@@ -86,15 +86,15 @@ function App() {
     ))
   }
 
-  const toggleReminderPause = (companyName: string) => {
+  const toggleReminderPause = (partyName: string) => {
     setEmailLogs(prev => prev.map(log => 
-      log.company === companyName 
+      log.company === partyName 
         ? { ...log, remindersPaused: !log.remindersPaused }
         : log
     ))
-    const log = emailLogs.find(l => l.company === companyName)
+    const log = emailLogs.find(l => l.company === partyName)
     const isPaused = !log?.remindersPaused
-    setMessage(`${isPaused ? '⏸️ Paused' : '▶️ Resumed'} auto-reminders for ${companyName}`)
+    setMessage(`${isPaused ? '⏸️ Paused' : '▶️ Resumed'} auto-reminders for ${partyName}`)
     setTimeout(() => setMessage(''), 2000)
   }
 
@@ -104,10 +104,10 @@ function App() {
     // Get companies with overdue invoices
     const overdueByCompany: Record<string, Invoice[]> = {}
     invoices.filter(inv => inv.dueDays <= 0 && !inv.excluded).forEach(inv => {
-      if (!overdueByCompany[inv.companyName]) {
-        overdueByCompany[inv.companyName] = []
+      if (!overdueByCompany[inv.partyName]) {
+        overdueByCompany[inv.partyName] = []
       }
-      overdueByCompany[inv.companyName].push(inv)
+      overdueByCompany[inv.partyName].push(inv)
     })
 
     for (const [company, companyInvoices] of Object.entries(overdueByCompany)) {
@@ -131,21 +131,23 @@ function App() {
     }
   }
 
-  const sendAutoReminder = async (companyName: string, companyInvoices: Invoice[]) => {
-    const total = companyInvoices.reduce((sum, inv) => sum + inv.balanceAmount, 0)
+  const sendAutoReminder = async (partyName: string, companyInvoices: Invoice[]) => {
+    const total = companyInvoices.reduce((sum, inv) => sum + inv.billAmount, 0)
     
     const payload = {
       type: 'auto_reminder_7day',
-      company: companyName,
-      email: companyInvoices[0].companyEmail,
+      company: partyName,
+      email: companyInvoices[0].partyEmail,
       totalAmount: total,
       invoiceCount: companyInvoices.length,
       invoices: companyInvoices.map(inv => ({
-        invoiceNo: inv.invoiceNo,
+        billNo: inv.billNo,
+        billDate: inv.billDate,
         billAmount: inv.billAmount,
-        pendingAmount: inv.pendingAmount,
-        balanceAmount: inv.balanceAmount,
-        invoiceDate: inv.invoiceDate,
+        gstAssessableAmount: inv.gstAssessableAmount,
+        stateUTTaxAmount: inv.stateUTTaxAmount,
+        centralTaxAmount: inv.centralTaxAmount,
+        integratedTaxAmount: inv.integratedTaxAmount,
         daysOverdue: Math.abs(inv.dueDays)
       })),
       triggeredAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
@@ -159,9 +161,9 @@ function App() {
       const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
       
       setEmailLogs(prev => {
-        const filtered = prev.filter(log => log.company !== companyName)
+        const filtered = prev.filter(log => log.company !== partyName)
         return [...filtered, {
-          company: companyName,
+          company: partyName,
           lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
           invoiceCount: companyInvoices.length,
           nextReminderDate: nextReminder.toISOString(),
@@ -203,20 +205,22 @@ function App() {
 
   const sendSingleInvoiceEmail = async (invoice: Invoice) => {
     setSendingInvoice(invoice.id)
-    console.log(`📧 Sending SINGLE invoice email for ${invoice.invoiceNo}`)
+    console.log(`📧 Sending SINGLE invoice email for ${invoice.billNo}`)
     
     const payload = {
       type: 'single_invoice',
-      company: invoice.companyName,
-      email: invoice.companyEmail,
-      totalAmount: invoice.balanceAmount,
+      company: invoice.partyName,
+      email: invoice.partyEmail,
+      totalAmount: invoice.billAmount,
       invoiceCount: 1,
       invoices: [{
-        invoiceNo: invoice.invoiceNo,
+        billNo: invoice.billNo,
+        billDate: invoice.billDate,
         billAmount: invoice.billAmount,
-        pendingAmount: invoice.pendingAmount,
-        balanceAmount: invoice.balanceAmount,
-        invoiceDate: invoice.invoiceDate,
+        gstAssessableAmount: invoice.gstAssessableAmount,
+        stateUTTaxAmount: invoice.stateUTTaxAmount,
+        centralTaxAmount: invoice.centralTaxAmount,
+        integratedTaxAmount: invoice.integratedTaxAmount,
         dueDays: invoice.dueDays
       }],
       triggeredAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
@@ -229,18 +233,18 @@ function App() {
       const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
       
       setEmailLogs(prev => {
-        const filtered = prev.filter(log => log.company !== invoice.companyName)
+        const filtered = prev.filter(log => log.company !== invoice.partyName)
         return [...filtered, {
-          company: invoice.companyName,
+          company: invoice.partyName,
           lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
           invoiceCount: 1,
           nextReminderDate: nextReminder.toISOString(),
           remindersPaused: false
         }]
       })
-      setMessage(`✓ Email sent for invoice ${invoice.invoiceNo} to ${invoice.companyEmail}`)
+      setMessage(`✓ Email sent for bill ${invoice.billNo} to ${invoice.partyEmail}`)
     } else {
-      setMessage(`✗ Failed to send email for invoice ${invoice.invoiceNo}`)
+      setMessage(`✗ Failed to send email for bill ${invoice.billNo}`)
     }
     
     setSendingInvoice(null)
@@ -262,33 +266,35 @@ function App() {
 
     console.log(`Found ${overdue.length} overdue invoices`)
 
-    // Group by company
+    // Group by party
     const grouped: Record<string, Invoice[]> = {}
     overdue.forEach(inv => {
-      if (!grouped[inv.companyName]) {
-        grouped[inv.companyName] = []
+      if (!grouped[inv.partyName]) {
+        grouped[inv.partyName] = []
       }
-      grouped[inv.companyName].push(inv)
+      grouped[inv.partyName].push(inv)
     })
 
     let successCount = 0
 
     for (const [company, companyInvoices] of Object.entries(grouped)) {
       console.log(`Sending to ${company} - ${companyInvoices.length} invoice(s)`)
-      const total = companyInvoices.reduce((sum, inv) => sum + inv.balanceAmount, 0)
+      const total = companyInvoices.reduce((sum, inv) => sum + inv.billAmount, 0)
       
       const payload = {
         type: 'bulk_overdue',
         company: company,
-        email: companyInvoices[0].companyEmail,
+        email: companyInvoices[0].partyEmail,
         totalAmount: total,
         invoiceCount: companyInvoices.length,
         invoices: companyInvoices.map(inv => ({
-          invoiceNo: inv.invoiceNo,
+          billNo: inv.billNo,
+          billDate: inv.billDate,
           billAmount: inv.billAmount,
-          pendingAmount: inv.pendingAmount,
-          balanceAmount: inv.balanceAmount,
-          invoiceDate: inv.invoiceDate,
+          gstAssessableAmount: inv.gstAssessableAmount,
+          stateUTTaxAmount: inv.stateUTTaxAmount,
+          centralTaxAmount: inv.centralTaxAmount,
+          integratedTaxAmount: inv.integratedTaxAmount,
           daysOverdue: Math.abs(inv.dueDays)
         })),
         triggeredAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
@@ -319,32 +325,34 @@ function App() {
     setTimeout(() => setMessage(''), 5000)
   }
 
-  const sendCompanyEmail = async (companyName: string) => {
-    setSendingCompany(companyName)
-    console.log(`🏢 Sending COMPANY email to ${companyName}`)
+  const sendCompanyEmail = async (partyName: string) => {
+    setSendingCompany(partyName)
+    console.log(`🏢 Sending COMPANY email to ${partyName}`)
     
-    const companyInvoices = invoices.filter(inv => inv.companyName === companyName && !inv.excluded)
+    const companyInvoices = invoices.filter(inv => inv.partyName === partyName && !inv.excluded)
     
     if (companyInvoices.length === 0) {
-      setMessage('No invoices to send for this company.')
+      setMessage('No invoices to send for this party.')
       setSendingCompany(null)
       return
     }
 
-    const total = companyInvoices.reduce((sum, inv) => sum + inv.balanceAmount, 0)
+    const total = companyInvoices.reduce((sum, inv) => sum + inv.billAmount, 0)
     
     const payload = {
       type: 'company_bulk',
-      company: companyName,
-      email: companyInvoices[0].companyEmail,
+      company: partyName,
+      email: companyInvoices[0].partyEmail,
       totalAmount: total,
       invoiceCount: companyInvoices.length,
       invoices: companyInvoices.map(inv => ({
-        invoiceNo: inv.invoiceNo,
+        billNo: inv.billNo,
+        billDate: inv.billDate,
         billAmount: inv.billAmount,
-        pendingAmount: inv.pendingAmount,
-        balanceAmount: inv.balanceAmount,
-        invoiceDate: inv.invoiceDate,
+        gstAssessableAmount: inv.gstAssessableAmount,
+        stateUTTaxAmount: inv.stateUTTaxAmount,
+        centralTaxAmount: inv.centralTaxAmount,
+        integratedTaxAmount: inv.integratedTaxAmount,
         dueDays: inv.dueDays
       })),
       triggeredAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
@@ -357,18 +365,18 @@ function App() {
       const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
       
       setEmailLogs(prev => {
-        const filtered = prev.filter(log => log.company !== companyName)
+        const filtered = prev.filter(log => log.company !== partyName)
         return [...filtered, {
-          company: companyName,
+          company: partyName,
           lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
           invoiceCount: companyInvoices.length,
           nextReminderDate: nextReminder.toISOString(),
           remindersPaused: false
         }]
       })
-      setMessage(`✓ Email sent to ${companyName} with ${companyInvoices.length} invoice(s)`)
+      setMessage(`✓ Email sent to ${partyName} with ${companyInvoices.length} invoice(s)`)
     } else {
-      setMessage(`✗ Failed to send email to ${companyName}`)
+      setMessage(`✗ Failed to send email to ${partyName}`)
     }
     
     setSendingCompany(null)
@@ -377,7 +385,7 @@ function App() {
 
   // Filter invoices
   const filteredInvoices = invoices.filter(inv => {
-    if (filterCompany && !inv.companyName.toLowerCase().includes(filterCompany.toLowerCase())) {
+    if (filterCompany && !inv.partyName.toLowerCase().includes(filterCompany.toLowerCase())) {
       return false
     }
     
@@ -392,8 +400,8 @@ function App() {
   const dueTodayCount = invoices.filter(inv => inv.dueDays === 0 && !inv.excluded).length
   const excludedCount = invoices.filter(inv => inv.excluded).length
   
-  // Get unique companies
-  const uniqueCompanies = Array.from(new Set(invoices.map(inv => inv.companyName)))
+  // Get unique parties
+  const uniqueCompanies = Array.from(new Set(invoices.map(inv => inv.partyName)))
 
   return (
     <div className="container">
@@ -434,7 +442,7 @@ function App() {
           disabled={loading}
         />
         <p style={{ marginTop: '10px', fontSize: '13px', color: '#666' }}>
-          Columns: Company Name, Company Email, Invoice No., Invoice Date, Due Days, Bill Amount, Pending Amount, Balance Amount
+          Columns: Party GSTIN No., Party Name, Party E-Mail, Bill Date, Bill No, Due Days, GST Assessable Amount, State/UT Tax Amount, Central Tax Amount, Integrated Tax Amount, Bill Amount
         </p>
       </div>
 
@@ -469,7 +477,7 @@ function App() {
             <div className="actions">
               <div>
                 <strong>{overdueCount} overdue invoices</strong> from{' '}
-                {new Set(invoices.filter(inv => inv.dueDays <= 0 && !inv.excluded).map(inv => inv.companyName)).size} companies
+                {new Set(invoices.filter(inv => inv.dueDays <= 0 && !inv.excluded).map(inv => inv.partyName)).size} parties
               </div>
               <button
                 className="btn btn-primary"
@@ -502,11 +510,11 @@ function App() {
               <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '5px', fontSize: '13px', fontWeight: 600 }}>
-                    Company Name
+                    Party Name
                   </label>
                   <input
                     type="text"
-                    placeholder="Search company..."
+                    placeholder="Search party..."
                     value={filterCompany}
                     onChange={(e) => setFilterCompany(e.target.value)}
                     style={{ 
@@ -578,17 +586,10 @@ function App() {
                 <h2 style={{ marginBottom: '12px', fontSize: '16px' }}>Auto-Reminder Status (7-Day Cycle)</h2>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
                   {uniqueCompanies.map(company => {
-                    const companyInvoiceCount = invoices.filter(inv => inv.companyName === company && !inv.excluded).length
-                    const overdueCount = invoices.filter(inv => inv.companyName === company && inv.dueDays <= 0 && !inv.excluded).length
+                    const companyInvoiceCount = invoices.filter(inv => inv.partyName === company && !inv.excluded).length
+                    const overdueCount = invoices.filter(inv => inv.partyName === company && inv.dueDays <= 0 && !inv.excluded).length
                     const log = emailLogs.find(l => l.company === company)
                     const isPaused = log?.remindersPaused || false
-                    
-                    console.log(`Debug ${company}:`, { 
-                      hasLog: !!log, 
-                      nextReminderDate: log?.nextReminderDate,
-                      isPaused, 
-                      overdueCount 
-                    })
                     
                     let timeUntilNext = ''
                     let nextReminderText = 'No reminders scheduled'
@@ -731,14 +732,17 @@ function App() {
                 <thead>
                   <tr>
                     <th>Exclude</th>
-                    <th>Company Name</th>
-                    <th>Company Email</th>
-                    <th>Invoice No.</th>
-                    <th>Invoice Date</th>
+                    <th>Party GSTIN No.</th>
+                    <th>Party Name</th>
+                    <th>Party E-Mail</th>
+                    <th>Bill No</th>
+                    <th>Bill Date</th>
                     <th>Due Days</th>
+                    <th>GST Assessable Amt</th>
+                    <th>State/UT Tax Amt</th>
+                    <th>Central Tax Amt</th>
+                    <th>Integrated Tax Amt</th>
                     <th>Bill Amount</th>
-                    <th>Pending Amount</th>
-                    <th>Balance Amount</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -758,48 +762,60 @@ function App() {
                         {editingId === inv.id ? (
                           <input
                             type="text"
-                            value={editData.companyName || ''}
-                            onChange={(e) => setEditData({ ...editData, companyName: e.target.value })}
+                            value={editData.partyGSTIN || ''}
+                            onChange={(e) => setEditData({ ...editData, partyGSTIN: e.target.value })}
                             style={{ width: '100%', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
                           />
                         ) : (
-                          <strong>{inv.companyName}</strong>
+                          inv.partyGSTIN
                         )}
                       </td>
                       <td>
                         {editingId === inv.id ? (
                           <input
                             type="text"
-                            value={editData.companyEmail || ''}
-                            onChange={(e) => setEditData({ ...editData, companyEmail: e.target.value })}
+                            value={editData.partyName || ''}
+                            onChange={(e) => setEditData({ ...editData, partyName: e.target.value })}
                             style={{ width: '100%', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
                           />
                         ) : (
-                          inv.companyEmail
+                          <strong>{inv.partyName}</strong>
                         )}
                       </td>
                       <td>
                         {editingId === inv.id ? (
                           <input
                             type="text"
-                            value={editData.invoiceNo || ''}
-                            onChange={(e) => setEditData({ ...editData, invoiceNo: e.target.value })}
+                            value={editData.partyEmail || ''}
+                            onChange={(e) => setEditData({ ...editData, partyEmail: e.target.value })}
                             style={{ width: '100%', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
                           />
                         ) : (
-                          inv.invoiceNo
+                          inv.partyEmail
                         )}
                       </td>
                       <td>
                         {editingId === inv.id ? (
                           <input
                             type="text"
-                            value={editData.invoiceDate || ''}
-                            onChange={(e) => setEditData({ ...editData, invoiceDate: e.target.value })}
+                            value={editData.billNo || ''}
+                            onChange={(e) => setEditData({ ...editData, billNo: e.target.value })}
                             style={{ width: '100%', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
                           />
                         ) : (
-                          inv.invoiceDate
+                          inv.billNo
+                        )}
+                      </td>
+                      <td>
+                        {editingId === inv.id ? (
+                          <input
+                            type="text"
+                            value={editData.billDate || ''}
+                            onChange={(e) => setEditData({ ...editData, billDate: e.target.value })}
+                            style={{ width: '100%', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
+                          />
+                        ) : (
+                          inv.billDate
                         )}
                       </td>
                       <td>
@@ -826,36 +842,60 @@ function App() {
                         {editingId === inv.id ? (
                           <input
                             type="number"
+                            value={editData.gstAssessableAmount ?? ''}
+                            onChange={(e) => setEditData({ ...editData, gstAssessableAmount: parseFloat(e.target.value) })}
+                            style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
+                          />
+                        ) : (
+                          `₹${(inv.gstAssessableAmount || 0).toLocaleString()}`
+                        )}
+                      </td>
+                      <td>
+                        {editingId === inv.id ? (
+                          <input
+                            type="number"
+                            value={editData.stateUTTaxAmount ?? ''}
+                            onChange={(e) => setEditData({ ...editData, stateUTTaxAmount: parseFloat(e.target.value) })}
+                            style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
+                          />
+                        ) : (
+                          `₹${(inv.stateUTTaxAmount || 0).toLocaleString()}`
+                        )}
+                      </td>
+                      <td>
+                        {editingId === inv.id ? (
+                          <input
+                            type="number"
+                            value={editData.centralTaxAmount ?? ''}
+                            onChange={(e) => setEditData({ ...editData, centralTaxAmount: parseFloat(e.target.value) })}
+                            style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
+                          />
+                        ) : (
+                          `₹${(inv.centralTaxAmount || 0).toLocaleString()}`
+                        )}
+                      </td>
+                      <td>
+                        {editingId === inv.id ? (
+                          <input
+                            type="number"
+                            value={editData.integratedTaxAmount ?? ''}
+                            onChange={(e) => setEditData({ ...editData, integratedTaxAmount: parseFloat(e.target.value) })}
+                            style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
+                          />
+                        ) : (
+                          `₹${(inv.integratedTaxAmount || 0).toLocaleString()}`
+                        )}
+                      </td>
+                      <td>
+                        {editingId === inv.id ? (
+                          <input
+                            type="number"
                             value={editData.billAmount ?? ''}
                             onChange={(e) => setEditData({ ...editData, billAmount: parseFloat(e.target.value) })}
                             style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
                           />
                         ) : (
-                          `₹${(inv.billAmount || 0).toLocaleString()}`
-                        )}
-                      </td>
-                      <td>
-                        {editingId === inv.id ? (
-                          <input
-                            type="number"
-                            value={editData.pendingAmount ?? ''}
-                            onChange={(e) => setEditData({ ...editData, pendingAmount: parseFloat(e.target.value) })}
-                            style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
-                          />
-                        ) : (
-                          `₹${(inv.pendingAmount || 0).toLocaleString()}`
-                        )}
-                      </td>
-                      <td>
-                        {editingId === inv.id ? (
-                          <input
-                            type="number"
-                            value={editData.balanceAmount ?? ''}
-                            onChange={(e) => setEditData({ ...editData, balanceAmount: parseFloat(e.target.value) })}
-                            style={{ width: '100px', padding: '4px', border: '1px solid #ddd', borderRadius: '3px' }}
-                          />
-                        ) : (
-                          <strong>₹{(inv.balanceAmount || 0).toLocaleString()}</strong>
+                          <strong>₹{(inv.billAmount || 0).toLocaleString()}</strong>
                         )}
                       </td>
                       <td>
