@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { Invoice, EmailLog } from './types'
 import { parseExcelFile } from './utils/excelParser'
 import { sendToWebhook } from './utils/webhook'
+import { invoiceService, emailLogService } from './services/database'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import EmailHistory from './pages/EmailHistory'
@@ -36,26 +37,20 @@ function App() {
     return () => clearInterval(checkReminders)
   }, [invoices, emailLogs])
 
-  // Load data from localStorage
+  // Load data from Supabase on mount
   useEffect(() => {
-    const saved = localStorage.getItem('invoices')
-    const logs = localStorage.getItem('emailLogs')
-    if (saved) setInvoices(JSON.parse(saved))
-    if (logs) setEmailLogs(JSON.parse(logs))
+    const loadData = async () => {
+      setLoading(true)
+      const [invoicesData, logsData] = await Promise.all([
+        invoiceService.getAllInvoices(),
+        emailLogService.getAllLogs()
+      ])
+      setInvoices(invoicesData)
+      setEmailLogs(logsData)
+      setLoading(false)
+    }
+    loadData()
   }, [])
-
-  // Save to localStorage
-  useEffect(() => {
-    if (invoices.length > 0) {
-      localStorage.setItem('invoices', JSON.stringify(invoices))
-    }
-  }, [invoices])
-
-  useEffect(() => {
-    if (emailLogs.length > 0) {
-      localStorage.setItem('emailLogs', JSON.stringify(emailLogs))
-    }
-  }, [emailLogs])
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -67,30 +62,39 @@ function App() {
     try {
       const parsed = await parseExcelFile(file)
       if (parsed.length === 0) {
-        setMessage('✗ No data found in Excel file')
+        setMessage('[ERROR] No data found in Excel file')
         setLoading(false)
         return
       }
-      setInvoices(parsed)
-      setMessage(`✓ Excel uploaded successfully! ${parsed.length} invoices loaded.`)
+      
+      // Save to Supabase
+      const savedInvoices = await invoiceService.addInvoices(parsed)
+      setInvoices(savedInvoices)
+      setMessage(`[SUCCESS] Excel uploaded successfully! ${savedInvoices.length} invoices saved to database`)
       setTimeout(() => setMessage(''), 3000)
     } catch (error) {
       console.error('Parse error:', error)
-      setMessage('✗ Error reading Excel file. Check the format and column names.')
+      setMessage('[ERROR] Error reading Excel file. Check the format and column names.')
     }
+    
     setLoading(false)
   }
 
-  const toggleReminderPause = (partyName: string) => {
-    setEmailLogs(prev => prev.map(log => 
-      log.company === partyName 
-        ? { ...log, remindersPaused: !log.remindersPaused }
-        : log
-    ))
+  const toggleReminderPause = async (partyName: string) => {
     const log = emailLogs.find(l => l.company === partyName)
     const isPaused = !log?.remindersPaused
-    setMessage(`${isPaused ? '⏸️ Paused' : '▶️ Resumed'} auto-reminders for ${partyName}`)
-    setTimeout(() => setMessage(''), 2000)
+    
+    const updatedLog = {
+      ...log,
+      company: partyName,
+      remindersPaused: isPaused
+    } as EmailLog
+    
+    await emailLogService.upsertLog(updatedLog)
+    
+    setEmailLogs(prev => prev.map(l => 
+      l.company === partyName ? updatedLog : l
+    ))
   }
 
   const checkAndSendAutoReminders = async () => {
@@ -115,12 +119,12 @@ function App() {
       if (log?.nextReminderDate) {
         const nextDate = new Date(log.nextReminderDate)
         if (now >= nextDate) {
-          console.log(`⏰ Auto-sending 7-day reminder to ${company}`)
+          console.log(`[AUTO-REMINDER] Sending 7-day reminder to ${company}`)
           await sendAutoReminder(company, companyInvoices)
         }
       } else if (!log) {
         // First time - send immediately
-        console.log(`🆕 First reminder to ${company}`)
+        console.log(`[FIRST-REMINDER] First reminder to ${company}`)
         await sendAutoReminder(company, companyInvoices)
       }
     }
@@ -148,24 +152,28 @@ function App() {
     
     if (result.success) {
       const now = new Date()
-      const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
+      const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+      
+      const newLog: EmailLog = {
+        company: partyName,
+        lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        invoiceCount: companyInvoices.length,
+        nextReminderDate: nextReminder.toISOString(),
+        remindersPaused: false
+      }
+      
+      await emailLogService.upsertLog(newLog)
       
       setEmailLogs(prev => {
         const filtered = prev.filter(log => log.company !== partyName)
-        return [...filtered, {
-          company: partyName,
-          lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-          invoiceCount: companyInvoices.length,
-          nextReminderDate: nextReminder.toISOString(),
-          remindersPaused: false
-        }]
+        return [...filtered, newLog]
       })
     }
   }
 
   const sendSingleInvoiceEmail = async (invoice: Invoice) => {
     setSendingInvoice(invoice.id)
-    console.log(`📧 Sending SINGLE invoice email for ${invoice.invoiceNo}`)
+    console.log(`[SINGLE] Sending invoice email for ${invoice.invoiceNo}`)
     
     const payload = {
       type: 'single_invoice',
@@ -187,21 +195,25 @@ function App() {
     
     if (result.success) {
       const now = new Date()
-      const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
+      const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+      
+      const newLog: EmailLog = {
+        company: invoice.companyName,
+        lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        invoiceCount: 1,
+        nextReminderDate: nextReminder.toISOString(),
+        remindersPaused: false
+      }
+      
+      await emailLogService.upsertLog(newLog)
       
       setEmailLogs(prev => {
         const filtered = prev.filter(log => log.company !== invoice.companyName)
-        return [...filtered, {
-          company: invoice.companyName,
-          lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-          invoiceCount: 1,
-          nextReminderDate: nextReminder.toISOString(),
-          remindersPaused: false
-        }]
+        return [...filtered, newLog]
       })
-      setMessage(`✓ Email sent for invoice ${invoice.invoiceNo} to ${invoice.companyEmail}`)
+      setMessage(`[SUCCESS] Email sent for invoice ${invoice.invoiceNo} to ${invoice.companyEmail}`)
     } else {
-      setMessage(`✗ Failed to send email for invoice ${invoice.invoiceNo}`)
+      setMessage(`[ERROR] Failed to send email for invoice ${invoice.invoiceNo}`)
     }
     
     setSendingInvoice(null)
@@ -210,7 +222,7 @@ function App() {
 
   const sendEmails = async () => {
     setLoading(true)
-    console.log('📦 Sending BULK OVERDUE emails to all companies')
+    console.log('[BULK] Sending OVERDUE emails to all companies')
     
     // Filter invoices where Due Days <= 0 (overdue) and not excluded
     const overdue = invoices.filter(inv => inv.dueDays <= 0 && !inv.excluded)
@@ -260,27 +272,31 @@ function App() {
         const now = new Date()
         const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
         
+        const newLog: EmailLog = {
+          company,
+          lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+          invoiceCount: companyInvoices.length,
+          nextReminderDate: nextReminder.toISOString(),
+          remindersPaused: false
+        }
+        
+        await emailLogService.upsertLog(newLog)
+        
         setEmailLogs(prev => {
           const filtered = prev.filter(log => log.company !== company)
-          return [...filtered, {
-            company,
-            lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-            invoiceCount: companyInvoices.length,
-            nextReminderDate: nextReminder.toISOString(),
-            remindersPaused: false
-          }]
+          return [...filtered, newLog]
         })
       }
     }
 
-    setMessage(`✓ Sent ${successCount} emails successfully!`)
+    setMessage(`[SUCCESS] Sent ${successCount} emails successfully!`)
     setLoading(false)
     setTimeout(() => setMessage(''), 5000)
   }
 
   const sendCompanyEmail = async (partyName: string) => {
     setSendingCompany(partyName)
-    console.log(`🏢 Sending COMPANY email to ${partyName}`)
+    console.log(`[COMPANY] Sending email to ${partyName}`)
     
     const companyInvoices = invoices.filter(inv => inv.companyName === partyName && !inv.excluded)
     
@@ -310,21 +326,25 @@ function App() {
     
     if (result.success) {
       const now = new Date()
-      const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
+      const nextReminder = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+      
+      const newLog: EmailLog = {
+        company: partyName,
+        lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        invoiceCount: companyInvoices.length,
+        nextReminderDate: nextReminder.toISOString(),
+        remindersPaused: false
+      }
+      
+      await emailLogService.upsertLog(newLog)
       
       setEmailLogs(prev => {
         const filtered = prev.filter(log => log.company !== partyName)
-        return [...filtered, {
-          company: partyName,
-          lastSent: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-          invoiceCount: companyInvoices.length,
-          nextReminderDate: nextReminder.toISOString(),
-          remindersPaused: false
-        }]
+        return [...filtered, newLog]
       })
-      setMessage(`✓ Email sent to ${partyName} with ${companyInvoices.length} invoice(s)`)
+      setMessage(`[SUCCESS] Email sent to ${partyName} with ${companyInvoices.length} invoice(s)`)
     } else {
-      setMessage(`✗ Failed to send email to ${partyName}`)
+      setMessage(`[ERROR] Failed to send email to ${partyName}`)
     }
     
     setSendingCompany(null)
@@ -384,7 +404,7 @@ function App() {
             </div>
 
             {message && (
-              <div className={`message ${message.includes('✗') ? 'error' : 'success'}`}>
+              <div className={`message ${message.includes('[ERROR]') ? 'error' : 'success'}`}>
                 {message}
               </div>
             )}

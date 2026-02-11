@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Invoice } from '../types'
+import { invoiceService } from '../services/database'
 
 interface DashboardProps {
   invoices: Invoice[]
@@ -31,17 +32,27 @@ const Dashboard = ({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editData, setEditData] = useState<Partial<Invoice>>({})
 
-  const toggleExclude = (id: string) => {
-    setInvoices(invoices.map(inv => 
-      inv.id === id ? { ...inv, excluded: !inv.excluded } : inv
-    ))
+  const toggleExclude = async (id: string) => {
+    const invoice = invoices.find(inv => inv.id === id)
+    if (!invoice) return
+    
+    const updated = await invoiceService.updateInvoice(id, { excluded: !invoice.excluded })
+    if (updated) {
+      setInvoices(invoices.map(inv => inv.id === id ? updated : inv))
+    }
   }
 
-  const deleteInvoice = (id: string) => {
+  const deleteInvoice = async (id: string) => {
     if (confirm('Are you sure you want to delete this invoice?')) {
-      setInvoices(invoices.filter(inv => inv.id !== id))
-      setMessage('✓ Invoice deleted successfully')
-      setTimeout(() => setMessage(''), 2000)
+      const success = await invoiceService.deleteInvoice(id)
+      if (success) {
+        setInvoices(invoices.filter(inv => inv.id !== id))
+        setMessage('[SUCCESS] Invoice deleted successfully')
+        setTimeout(() => setMessage(''), 2000)
+      } else {
+        setMessage('[ERROR] Failed to delete invoice')
+        setTimeout(() => setMessage(''), 2000)
+      }
     }
   }
 
@@ -55,13 +66,18 @@ const Dashboard = ({
     setEditData({})
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingId) return
     
-    setInvoices(invoices.map(inv => 
-      inv.id === editingId ? { ...inv, ...editData } as Invoice : inv
-    ))
-    setMessage('✓ Invoice updated successfully')
+    const updated = await invoiceService.updateInvoice(editingId, editData)
+    if (updated) {
+      setInvoices(invoices.map(inv => 
+        inv.id === editingId ? updated : inv
+      ))
+      setMessage('[SUCCESS] Invoice updated successfully')
+    } else {
+      setMessage('[ERROR] Failed to update invoice')
+    }
     setTimeout(() => setMessage(''), 2000)
     setEditingId(null)
     setEditData({})
