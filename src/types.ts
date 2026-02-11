@@ -1,16 +1,13 @@
 export interface Invoice {
   id: string
-  partyGSTIN: string
-  partyName: string
-  partyEmail: string
-  billNo: string
-  billDate: string
+  companyName: string
+  companyEmail: string
+  invoiceNo: string
+  invoiceDate: string
   dueDays: number
-  gstAssessableAmount: number
-  stateUTTaxAmount: number
-  centralTaxAmount: number
-  integratedTaxAmount: number
-  billAmount: number
+  billAmount: string
+  pendingAmount: string
+  balanceAmount: string
   excluded: boolean
 }
 
